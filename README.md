@@ -295,3 +295,7 @@ helm unittest .        # https://github.com/helm-unittest/helm-unittest
 
 CI (`.github/workflows/ci.yaml`) runs lint, template and unittest, then a smoke install in kind
 with a temporary PostgreSQL.
+
+## License
+
+[MIT](LICENSE)
