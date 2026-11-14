@@ -1,0 +1,124 @@
+suite: routing and cert-manager
+templates:
+  - routing/gatewayapi-httproute.yaml
+  - routing/istio-gateway.yaml
+  - routing/istio-virtualservice.yaml
+  - certmanager/issuer.yaml
+  - certmanager/certificate.yaml
+  - certmanager/referencegrant.yaml
+release:
+  name: rw
+  namespace: remnawave
+set:
+  database.external.url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+  routing.skipCrdCheck: true
+  certManager.skipCrdCheck: true
+tests:
+  - it: Gateway API shared Gateway, subscription page under a prefix
+    template: routing/gatewayapi-httproute.yaml
+    set:
+      routing.type: gatewayApi
+      routing.gatewayApi.parentRefs: [{ name: public-gw, namespace: gateway-system, sectionName: https }]
+      subscriptionPage.enabled: true
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: t
+      subscriptionPage.env.CUSTOM_SUB_PREFIX: s
+    asserts:
+      - hasDocuments: { count: 1 }
+      - equal: { path: 'spec.hostnames[0]', value: panel.example.com }
+      - equal: { path: 'spec.rules[0].matches[0].path.value', value: /s }
+      - equal: { path: 'spec.rules[0].backendRefs[0].port', value: 3010 }
+      - equal: { path: 'spec.rules[1].backendRefs[0].port', value: 3000 }
+
+  - it: Istio prefix match does not catch longer paths
+    template: routing/istio-virtualservice.yaml
+    set:
+      routing.type: istio
+      routing.istio.gateways: [istio-system/public-gw]
+      subscriptionPage.enabled: true
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: t
+      subscriptionPage.env.CUSTOM_SUB_PREFIX: s
+    asserts:
+      - equal: { path: 'spec.http[0].match[0].uri.exact', value: /s }
+      - equal: { path: 'spec.http[0].match[1].uri.prefix', value: /s/ }
+
+  - it: Istio + HTTP-01 moves the redirect into the VirtualService
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      certManager.enabled: true
+    asserts:
+      - notExists:
+          path: spec.servers[0].tls
+        template: routing/istio-gateway.yaml
+      - equal:
+          path: spec.http[0].redirect.scheme
+          value: https
+        template: routing/istio-virtualservice.yaml
+      - equal:
+          path: spec.http[1].match[0].port
+          value: 443
+        template: routing/istio-virtualservice.yaml
+
+  - it: Istio without cert-manager keeps the Gateway redirect
+    template: routing/istio-gateway.yaml
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+    asserts:
+      - equal: { path: 'spec.servers[0].tls.httpsRedirect', value: true }
+
+  - it: Istio Certificate and Issuer live in the ingress gateway namespace
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      certManager.enabled: true
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: istio-system
+        template: certmanager/certificate.yaml
+      - equal:
+          path: metadata.namespace
+          value: istio-system
+        template: certmanager/issuer.yaml
+      - equal:
+          path: spec.acme.solvers[0].http01.ingress.class
+          value: istio
+        template: certmanager/issuer.yaml
+
+  - it: Certificate covers panel and subscription hosts
+    template: certmanager/certificate.yaml
+    set:
+      routing.type: gatewayApi
+      routing.gatewayApi.createGateway: true
+      routing.gatewayApi.gateway.className: cilium
+      routing.hosts.sub: sub.example.com
+      subscriptionPage.enabled: true
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: t
+      certManager.enabled: true
+    asserts:
+      - equal: { path: spec.dnsNames, value: [panel.example.com, sub.example.com] }
+      - equal: { path: spec.secretName, value: rw-remnawave-tls }
+      - equal: { path: spec.issuerRef, value: { name: rw-remnawave, kind: Issuer, group: cert-manager.io } }
+
+  - it: shared Gateway in another namespace gets a ReferenceGrant
+    template: certmanager/referencegrant.yaml
+    set:
+      routing.type: gatewayApi
+      routing.gatewayApi.parentRefs: [{ name: public-gw, namespace: gateway-system }]
+      certManager.enabled: true
+      certManager.issuer.solver: dns01
+      certManager.issuer.dns01.cloudflare.apiTokenSecretRef.name: cf
+    asserts:
+      - equal: { path: 'spec.from[0].namespace', value: gateway-system }
+      - equal: { path: 'spec.to[0].name', value: rw-remnawave-tls }
+
+  - it: own Gateway needs no ReferenceGrant
+    template: certmanager/referencegrant.yaml
+    set:
+      routing.type: gatewayApi
+      routing.gatewayApi.createGateway: true
+      routing.gatewayApi.gateway.className: cilium
+      certManager.enabled: true
+    asserts:
+      - hasDocuments: { count: 0 }

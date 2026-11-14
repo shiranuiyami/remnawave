@@ -1,0 +1,14 @@
+apiVersion: v2
+name: remnawave
+description: Remnawave panel with Valkey and optional subscription page
+type: application
+version: 0.1.0
+appVersion: "3"
+home: https://docs.rw
+sources:
+  - https://github.com/remnawave/backend
+  - https://github.com/remnawave/subscription-page
+keywords:
+  - remnawave
+  - xray
+  - vpn

@@ -1,0 +1,72 @@
+{{- $np := .Values.networkPolicy }}
+{{- if $np.enabled }}
+---
+# Panel pod: HTTP (and subscription page) from the gateway, metrics from the
+# monitoring stack. Egress is not restricted (DB, Valkey, nodes, Telegram, webhooks).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "remnawave.panel.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "panel") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "panel") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+        {{- if include "remnawave.sub.enabled" . }}
+        - port: sub
+          protocol: TCP
+        {{- end }}
+      {{- with $np.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with $np.metricsFrom }}
+    - ports:
+        - port: metrics
+          protocol: TCP
+      from:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $np.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- if and .Values.valkey.enabled (eq .Values.valkey.mode "standalone") }}
+---
+# Standalone Valkey: only the panel pod may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "remnawave.valkey.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "valkey") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: valkey
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "panel") | nindent 14 }}
+{{- end }}
+{{- end }}

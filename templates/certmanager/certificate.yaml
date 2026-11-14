@@ -1,0 +1,40 @@
+{{- $cm := .Values.certManager }}
+{{- if and $cm.enabled $cm.certificate.create }}
+{{- $c := $cm.certificate }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "remnawave.routing.tlsSecretName" . }}
+  namespace: {{ include "remnawave.certManager.namespace" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "tls") | nindent 4 }}
+    {{- with $c.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge (deepCopy $c.annotations) .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ include "remnawave.routing.tlsSecretName" . }}
+  dnsNames:
+    {{- include "remnawave.certManager.dnsNames" . | nindent 4 }}
+  issuerRef:
+    name: {{ include "remnawave.certManager.issuerName" . }}
+    kind: {{ $cm.issuer.kind }}
+    group: {{ $cm.issuer.group | default "cert-manager.io" }}
+  {{- with $c.duration }}
+  duration: {{ . }}
+  {{- end }}
+  {{- with $c.renewBefore }}
+  renewBefore: {{ . }}
+  {{- end }}
+  {{- with $c.privateKey }}
+  privateKey:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $c.secretTemplate }}
+  secretTemplate:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

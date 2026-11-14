@@ -1,0 +1,65 @@
+{{- if eq .Values.database.mode "cnpg" }}
+{{- $c := .Values.database.cnpg }}
+{{- $g := .Values.scheduling }}
+{{- $name := include "remnawave.cnpg.fullname" . }}
+{{- $nodeSelector := merge (deepCopy (default (dict) $c.nodeSelector)) (default (dict) $g.nodeSelector) }}
+{{- $tolerations := default $g.tolerations $c.tolerations }}
+{{- $affinity := default (default (dict) $g.affinity) $c.affinity }}
+{{- $tsc := default $g.topologySpreadConstraints $c.topologySpreadConstraints }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "database") | nindent 4 }}
+  {{- $annotations := deepCopy (default (dict) .Values.commonAnnotations) }}
+  {{- if $c.keepOnUninstall }}
+  {{- $_ := set $annotations "helm.sh/resource-policy" "keep" }}
+  {{- end }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- $spec := dict
+      "instances" (int $c.instances)
+      "imageName" $c.imageName
+      "primaryUpdateStrategy" $c.primaryUpdateStrategy
+      "enableSuperuserAccess" false
+  }}
+  {{- $initdb := dict "database" $c.database "owner" $c.owner }}
+  {{- with $c.ownerSecret }}
+  {{- $_ := set $initdb "secret" (dict "name" .) }}
+  {{- end }}
+  {{- $_ := set $spec "bootstrap" (dict "initdb" $initdb) }}
+
+  {{- $pg := dict "parameters" (default (dict) $c.postgresql.parameters) }}
+  {{- with $c.postgresql.pg_hba }}{{ $_ := set $pg "pg_hba" . }}{{ end }}
+  {{- $_ := set $spec "postgresql" $pg }}
+
+  {{- $storage := dict "size" $c.storage.size }}
+  {{- with $c.storage.storageClass }}{{ $_ := set $storage "storageClass" . }}{{ end }}
+  {{- $_ := set $spec "storage" $storage }}
+  {{- with $c.walStorage }}{{ $_ := set $spec "walStorage" . }}{{ end }}
+  {{- with $c.resources }}{{ $_ := set $spec "resources" . }}{{ end }}
+
+  {{- /* Map k8s-style scheduling onto CNPG's AffinityConfiguration */}}
+  {{- $aff := dict
+      "enablePodAntiAffinity" $c.podAntiAffinity.enabled
+      "podAntiAffinityType" $c.podAntiAffinity.type
+      "topologyKey" $c.podAntiAffinity.topologyKey
+  }}
+  {{- with $nodeSelector }}{{ $_ := set $aff "nodeSelector" . }}{{ end }}
+  {{- with $tolerations }}{{ $_ := set $aff "tolerations" . }}{{ end }}
+  {{- with $affinity.nodeAffinity }}{{ $_ := set $aff "nodeAffinity" . }}{{ end }}
+  {{- with $affinity.podAffinity }}{{ $_ := set $aff "additionalPodAffinity" . }}{{ end }}
+  {{- with $affinity.podAntiAffinity }}{{ $_ := set $aff "additionalPodAntiAffinity" . }}{{ end }}
+  {{- $_ := set $spec "affinity" $aff }}
+  {{- with $tsc }}{{ $_ := set $spec "topologySpreadConstraints" (tpl (toYaml .) $ | fromYamlArray) }}{{ end }}
+
+  {{- with $c.monitoring }}{{ $_ := set $spec "monitoring" . }}{{ end }}
+  {{- with $c.backup }}{{ $_ := set $spec "backup" . }}{{ end }}
+  {{- with $c.inheritedMetadata }}{{ $_ := set $spec "inheritedMetadata" . }}{{ end }}
+  {{- $spec = mergeOverwrite $spec (deepCopy (default (dict) $c.extraSpec)) }}
+  {{- toYaml $spec | nindent 2 }}
+{{- end }}

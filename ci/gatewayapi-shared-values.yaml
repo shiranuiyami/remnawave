@@ -1,0 +1,19 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+routing:
+  type: gatewayApi
+  skipCrdCheck: true
+  hosts:
+    panel: panel.example.com
+  gatewayApi:
+    parentRefs:
+      - name: public-gw
+        namespace: gateway-system
+        sectionName: https
+    httpRedirectParentRefs:
+      - name: public-gw
+        namespace: gateway-system
+        sectionName: http
+    timeouts:
+      request: 60s

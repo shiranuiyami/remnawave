@@ -1,0 +1,125 @@
+{{- $ns := .Release.Namespace }}
+{{- $panel := include "remnawave.panel.fullname" . }}
+{{- $appPort := include "remnawave.panel.appPort" . }}
+{{- $sub := include "remnawave.sub.enabled" . }}
+{{- $r := .Values.routing }}
+Remnawave panel ({{ include "remnawave.image" (dict "image" .Values.panel.image "default" .Chart.AppVersion) }}) deployed as {{ $panel }} in namespace {{ $ns }}.
+
+Open the panel:
+{{- if ne $r.type "none" }}
+  {{ ternary "https" "http" $r.tls.enabled }}://{{ include "remnawave.routing.panelHost" . }}
+{{- else }}
+  kubectl -n {{ $ns }} port-forward svc/{{ $panel }} 3000:{{ $appPort }}   # then http://localhost:3000
+  routing.type=none: expose it yourself (Ingress / LoadBalancer) -> service {{ $panel }} port {{ $appPort }}{{ if $sub }} (subscription page: port {{ include "remnawave.sub.port" . }}){{ end }}
+{{- end }}
+  On the first visit create the admin account.
+
+Services (in-cluster):
+  Panel:    http://{{ $panel }}.{{ $ns }}.svc:{{ $appPort }}
+  Metrics:  http://{{ $panel }}.{{ $ns }}.svc:{{ include "remnawave.panel.metricsPort" . }}/metrics (never routed)
+{{- if $sub }}
+  Sub page: http://{{ $panel }}.{{ $ns }}.svc:{{ include "remnawave.sub.port" . }} (container subscription-page in the panel pod)
+{{- end }}
+  SUB_PUBLIC_DOMAIN: {{ include "remnawave.panel.subPublicDomain" . }}
+{{- if not $sub }}
+
+Subscription page: disabled. To enable it, create an API token in the panel UI, then
+  helm upgrade {{ .Release.Name }} <chart> -n {{ $ns }} --reuse-values --set subscriptionPage.enabled=true \
+    --set subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN=<token>   (or subscriptionPage.existingSecret)
+{{- end }}
+
+Database: {{ .Values.database.mode }}
+{{- $db := include "remnawave.database.urlSecretRef" . | fromYaml }}
+  DATABASE_URL from secret {{ $db.name }} (key {{ $db.key }})
+{{- if eq .Values.database.mode "cnpg" }}
+  CNPG cluster {{ include "remnawave.cnpg.fullname" . }}, instances: {{ .Values.database.cnpg.instances }}
+  Status:  kubectl -n {{ $ns }} get cluster {{ include "remnawave.cnpg.fullname" . }}
+  The panel waits in Init until the operator creates secret {{ include "remnawave.cnpg.fullname" . }}-app and the primary is ready.
+  {{- if .Values.database.cnpg.keepOnUninstall }}
+  The Cluster is kept on `helm uninstall` (helm.sh/resource-policy: keep); delete it manually if needed.
+  {{- end }}
+{{- else }}
+  PostgreSQL must use the UTC time zone (SHOW timezone;).
+{{- end }}
+
+{{- $v := .Values.valkey }}
+{{- if $v.enabled }}
+
+Valkey: {{ $v.mode }}{{ if eq $v.mode "sidecar" }} (unix socket {{ $v.socketPath }}; data is lost on every panel rollout){{ else }} ({{ include "remnawave.valkey.fullname" . }}:{{ $v.port }}){{ end }}, db {{ index .Values.panel.env "REDIS_DB" | default $v.db }}
+{{- if $v.auth.enabled }}
+  Password: secret {{ include "remnawave.valkey.secretName" . }} (key {{ include "remnawave.valkey.secretKey" . }})
+{{- end }}
+{{- else }}
+{{- $e := .Values.externalRedis }}
+
+Redis: external {{ if $e.socket }}unix socket {{ $e.socket }}{{ else }}{{ $e.host }}:{{ $e.port }}{{ end }}
+{{- if $e.existingSecret }}
+  Password: secret {{ $e.existingSecret }} (key {{ $e.existingSecretPasswordKey }})
+{{- end }}
+{{- end }}
+
+Secrets:
+  Metrics credentials: user {{ index .Values.panel.env "METRICS_USER" | default "<unset>" }}, password:
+    kubectl -n {{ $ns }} get secret {{ $panel }} -o jsonpath='{.data.METRICS_PASS}' | base64 -d
+{{- with .Values.panel.existingSecret }}
+  panel.existingSecret {{ . }} is added last to envFrom and overrides the chart env with the same names.
+{{- end }}
+{{- $generated := list }}
+{{- range $key := list "APP_SECRET" "METRICS_PASS" }}
+{{- if not (include "remnawave.isSet" (index $.Values.panel.secretEnv $key)) }}{{ $generated = append $generated $key }}{{ end }}
+{{- end }}
+{{- if and $v.enabled $v.auth.enabled (not $v.auth.existingSecret) (not (include "remnawave.isSet" $v.auth.password)) }}
+{{- $generated = append $generated "valkey.auth.password" }}
+{{- end }}
+{{- with $generated }}
+  Generated on the first install and kept across upgrades via `lookup`: {{ join ", " . }}.
+  `helm template` / Argo CD cannot read them back and would generate new ones on every render:
+  set them explicitly or use existingSecret (see README, "Secrets, lookup and GitOps").
+{{- end }}
+
+Routing: {{ $r.type }}
+{{- if ne $r.type "none" }}
+{{- range (include "remnawave.routing.model" . | fromYamlArray) }}
+  {{ ternary "https" "http" $r.tls.enabled }}://{{ .host }}{{ range .rules }}  [{{ .path }} -> :{{ .port }}]{{ end }}
+{{- end }}
+{{- if $r.tls.enabled }}
+  TLS secret: {{ include "remnawave.routing.tlsSecretName" . }}{{ if .Values.certManager.enabled }} (issued by cert-manager in namespace {{ include "remnawave.certManager.namespace" . }}){{ else if eq $r.type "istio" }} (must exist in namespace {{ $r.istio.gateway.namespace }}){{ else }} (must exist in namespace {{ $ns }}){{ end }}
+{{- end }}
+{{- end }}
+{{- $cm := .Values.certManager }}
+{{- if $cm.enabled }}
+
+cert-manager: {{ $cm.issuer.kind }} {{ include "remnawave.certManager.issuerName" . }} ({{ ternary "created by the chart" "existing" $cm.issuer.create }}, {{ $cm.issuer.solver }})
+{{- if $cm.certificate.create }}
+  Certificate: kubectl -n {{ include "remnawave.certManager.namespace" . }} get certificate {{ include "remnawave.routing.tlsSecretName" . }}
+  Issues:      kubectl -n {{ include "remnawave.certManager.namespace" . }} get certificaterequest,order,challenge
+{{- end }}
+{{- if include "remnawave.certManager.http01" . }}
+{{- if eq .Values.routing.type "gatewayApi" }}
+  HTTP-01 via Gateway API: cert-manager must run with --enable-gateway-api (config.enableGatewayAPI=true).
+{{- else if eq .Values.routing.type "istio" }}
+  HTTP-01 via an Ingress of class istio: Istio must watch Ingresses (meshConfig.ingressControllerMode)
+  and the challenge must reach the same ingress gateway on :{{ .Values.routing.istio.ports.http }}.
+  {{- if not .Values.routing.istio.createGateway }}
+  The shared Gateway must not set tls.httpsRedirect on its HTTP server: the redirect is done in the VirtualService.
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- with include "remnawave.certManager.referenceGrantNamespaces" . | fromYamlArray }}
+  ReferenceGrant: Gateways from {{ join ", " . }} may use secret {{ include "remnawave.routing.tlsSecretName" $ }}; reference it
+  from the shared Gateway HTTPS listener (certificateRefs, namespace {{ include "remnawave.certManager.namespace" $ }}).
+{{- end }}
+{{- end }}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+
+ServiceMonitor {{ $panel }}: port metrics, /metrics, Basic auth
+  {{- if not .Values.metrics.serviceMonitor.labels }} (no labels set: check that your Prometheus serviceMonitorSelector picks it up){{ end }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicy: panel :{{ $appPort }}{{ if $sub }}/:{{ include "remnawave.sub.port" . }}{{ end }} from {{ ternary "any source (set networkPolicy.ingressFrom to the gateway)" "networkPolicy.ingressFrom" (empty .Values.networkPolicy.ingressFrom) }}, metrics :{{ include "remnawave.panel.metricsPort" . }} from {{ ternary "nobody" "networkPolicy.metricsFrom" (empty .Values.networkPolicy.metricsFrom) }}
+{{- if and $v.enabled (eq $v.mode "standalone") }}
+  Valkey: only from the panel pod.
+{{- end }}
+  Egress is not restricted. Requires a CNI that enforces NetworkPolicy.
+{{- end }}

@@ -1,0 +1,53 @@
+{{- if and .Values.valkey.enabled (eq .Values.valkey.mode "standalone") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "remnawave.valkey.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Non-persistent cache/queue store: one replica, never two at once.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "valkey") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "remnawave.componentLabels" (dict "ctx" . "component" "valkey") | nindent 8 }}
+        {{- with .Values.valkey.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.valkey.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.valkey.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.valkey.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        {{- include "remnawave.valkey.container" . | nindent 8 }}
+      volumes:
+        - name: valkey-data
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- include "remnawave.scheduling" (dict "ctx" . "component" .Values.valkey) | nindent 6 }}
+{{- end }}

@@ -1,0 +1,14 @@
+{{- if include "remnawave.sub.enabled" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "remnawave.sub.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "subscription-page") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{- include "remnawave.envData" (include "remnawave.sub.configEnv" . | fromYaml) | trim | nindent 2 }}
+{{- end }}

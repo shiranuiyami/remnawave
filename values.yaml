@@ -1,0 +1,723 @@
+# -- Override chart name
+nameOverride: ""
+# -- Override full resource name
+fullnameOverride: ""
+# -- Labels added to every resource
+commonLabels: {}
+# -- Annotations added to every resource
+commonAnnotations: {}
+# -- Image pull secrets for all pods
+imagePullSecrets: []
+
+# =============================================================================
+# Scheduling defaults for all components (panel pod, standalone Valkey, ...).
+# Per-component values override them:
+#   nodeSelector    - merged, component keys win
+#   affinity / tolerations / topologySpreadConstraints - component value
+#                     replaces the global one when non-empty
+# The subscription page and sidecar Valkey live in the panel pod and follow it.
+#
+# Example: pin everything to dedicated nodes
+#   scheduling:
+#     nodeSelector:
+#       node-role.kubernetes.io/remnawave: ""
+#     tolerations:
+#       - key: dedicated
+#         operator: Equal
+#         value: remnawave
+#         effect: NoSchedule
+# =============================================================================
+scheduling:
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  topologySpreadConstraints: []
+
+serviceAccount:
+  create: true
+  # -- Name of the ServiceAccount (generated from fullname when empty)
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# =============================================================================
+# Panel (remnawave/backend)
+# =============================================================================
+panel:
+  image:
+    repository: remnawave/backend
+    # -- Defaults to .Chart.AppVersion
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # ---------------------------------------------------------------------------
+  # Environment variables.
+  #
+  # Keys are env var names, verbatim. Any key you add here is passed to the
+  # container, so new upstream variables work without chart changes.
+  #   - null / "" -> variable is not set (application default applies)
+  #   - bool / number -> stringified
+  #   - list / map -> JSON ([60, 80] -> "[60,80]")
+  #
+  # Managed by the chart, do NOT set here:
+  #   DATABASE_URL                    -> database.*
+  #   REDIS_HOST/PORT/SOCKET/PASSWORD -> valkey.* / externalRedis.*
+  #   REDIS_USERNAME                  -> externalRedis.username
+  #
+  # Reference: https://docs.rw/docs/install/environment-variables
+  # ---------------------------------------------------------------------------
+  env:
+    ### App ###
+    APP_PORT: 3000
+    METRICS_PORT: 3001
+    # -- pm2 API workers: number, "max" (all cores) or -1 (all cores - 1).
+    # Do not exceed the CPU limit of the container.
+    API_INSTANCES: 1
+    # -- pm2 queue processor workers
+    WORKER_INSTANCES: null
+    # -- Do not serve the bundled frontend (API only)
+    DISABLE_FRONTEND: null
+    # -- Admin session lifetime in hours (12-168)
+    JWT_AUTH_LIFETIME: null
+
+    ### Domains ###
+    # -- Panel domain, without scheme. Empty -> routing.hosts.panel
+    PANEL_DOMAIN: ""
+    # -- CORS origin: "*" or the panel domain
+    FRONT_END_DOMAIN: "*"
+    # -- Public subscription domain, without scheme and trailing slash. Empty ->
+    #   subscription page enabled: "<routing.hosts.sub or panel domain>[/<CUSTOM_SUB_PREFIX>]";
+    #   otherwise: "<panel domain>/api/sub"
+    SUB_PUBLIC_DOMAIN: ""
+
+    ### Redis DB index (0-15); connection itself is wired by the chart ###
+    REDIS_DB: null
+
+    ### Telegram notifications ###
+    IS_TELEGRAM_NOTIFICATIONS_ENABLED: false
+    TELEGRAM_BOT_API_ROOT: null
+    # -- protocol://user:password@host:port, e.g. socks5://proxy:1080
+    TELEGRAM_BOT_PROXY: null
+    # -- "chat_id" or "chat_id:thread_id"
+    TELEGRAM_NOTIFY_USERS: null
+    TELEGRAM_NOTIFY_NODES: null
+    TELEGRAM_NOTIFY_CRM: null
+    TELEGRAM_NOTIFY_SERVICE: null
+    TELEGRAM_NOTIFY_TBLOCKER: null
+
+    ### Prometheus ###
+    METRICS_USER: admin
+
+    ### Webhook ###
+    WEBHOOK_ENABLED: false
+    # -- One or more http(s) URLs, comma separated
+    WEBHOOK_URL: null
+
+    ### Notifications ###
+    BANDWIDTH_USAGE_NOTIFICATIONS_ENABLED: false
+    # -- Ascending integers 25..95, at most 5 values
+    BANDWIDTH_USAGE_NOTIFICATIONS_THRESHOLD: [60, 80]
+    NOT_CONNECTED_USERS_NOTIFICATIONS_ENABLED: false
+    # -- Ascending integers 1..744 (hours after user creation), at most 3 values
+    NOT_CONNECTED_USERS_NOTIFICATIONS_AFTER_HOURS: [6, 24, 48]
+    EXPIRATION_NOTIFICATIONS_ENABLED: false
+    # -- Ascending non-zero integers -744..744 (hours relative to expireAt),
+    # at most 5 negative and 5 positive
+    EXPIRATION_NOTIFICATIONS: [-72, -48, -24, 24]
+
+    ### Export to Redis Streams ###
+    EXPORT_TO_STREAM_ENABLED: false
+    EXPORT_TO_STREAM_MAXLEN: 3000
+
+    ### Short UUID (subscription link identifier) ###
+    # -- nanoid | uuid | custom
+    SHORT_UUID_METHOD: nanoid
+    # -- 16..64, only for nanoid
+    SHORT_UUID_LENGTH: 16
+    # -- Required for custom, e.g. "{hex:16}-{hex:16}-{digits:10}"
+    SHORT_UUID_CUSTOM_PATTERN: null
+
+    ### Services ###
+    SERVICE_SNI_VERIFICATION: true
+    SERVICE_CLEAN_USAGE_HISTORY: null
+    SERVICE_DISABLE_USER_USAGE_RECORDS: null
+    SERVICE_DISABLE_SRH_RECORDS: null
+    # -- Ignore per-user traffic deltas below this many bytes (max 1048576)
+    USER_USAGE_IGNORE_BELOW_BYTES: null
+
+    ### Logging ###
+    IS_HTTP_LOGGING_ENABLED: null
+    ENABLE_DEBUG_LOGS: null
+
+  # ---------------------------------------------------------------------------
+  # Secret environment variables (rendered into a Secret). Same rules as env.
+  # APP_SECRET / METRICS_PASS: empty -> generated once and kept across upgrades
+  # (via `lookup`; with `helm template` / Argo CD set them explicitly).
+  # ---------------------------------------------------------------------------
+  secretEnv:
+    APP_SECRET: ""
+    METRICS_PASS: ""
+    TELEGRAM_BOT_TOKEN: null
+    # -- At least 32 chars, [a-zA-Z0-9] only
+    WEBHOOK_SECRET_HEADER: null
+
+  # -- Existing Secret with env vars, added last to envFrom (overrides env/secretEnv)
+  existingSecret: ""
+  # -- Extra raw EnvVar entries (highest precedence)
+  extraEnv: []
+  # -- Extra raw EnvFromSource entries
+  extraEnvFrom: []
+
+  # NOTE: the panel always runs as a single replica with the Recreate strategy:
+  # the container runs the pm2 scheduler (must not be scaled) and DB migrations.
+  # Scale with API_INSTANCES / WORKER_INSTANCES instead.
+
+  service:
+    type: ClusterIP
+    annotations: {}
+    labels: {}
+
+  startupProbe:
+    enabled: true
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  livenessProbe:
+    enabled: true
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    enabled: true
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext: {}
+  securityContext: {}
+  # -- Panel pod placement (also applies to the subscription page and sidecar Valkey).
+  # Overrides the global `scheduling` block, see above.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  terminationGracePeriodSeconds: 30
+  extraVolumes: []
+  extraVolumeMounts: []
+  initContainers: []
+  extraContainers: []
+
+# =============================================================================
+# Subscription page (remnawave/subscription-page): a container in the panel pod,
+# talks to the panel over 127.0.0.1. Exposed on routing.hosts.sub, or on the
+# panel host under /<CUSTOM_SUB_PREFIX>.
+#
+# First install: the API token is created in the UI of a running panel, so
+# install with enabled=false, create the token, then enable and `helm upgrade`.
+# =============================================================================
+subscriptionPage:
+  enabled: false
+  image:
+    repository: remnawave/subscription-page
+    # -- Pin a version in production
+    tag: latest
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # -- Non-secret env (ConfigMap). Keys are env var names; null / "" are skipped.
+  env:
+    APP_PORT: 3010
+    # -- Empty -> http://127.0.0.1:<panel APP_PORT> (same pod)
+    REMNAWAVE_PANEL_URL: ""
+    # -- Path prefix; required when the page shares the panel host (routing.hosts.sub empty)
+    CUSTOM_SUB_PREFIX: ""
+    TRUST_PROXY: 1
+    MARZBAN_LEGACY_LINK_ENABLED: false
+    MARZBAN_LEGACY_SUBSCRIPTION_VALID_FROM: null
+
+  # -- Secret env. REMNAWAVE_API_TOKEN is required (or provide it via existingSecret).
+  secretEnv:
+    REMNAWAVE_API_TOKEN: ""
+    CADDY_AUTH_API_TOKEN: null
+    CLOUDFLARE_ZERO_TRUST_CLIENT_ID: null
+    CLOUDFLARE_ZERO_TRUST_CLIENT_SECRET: null
+    MARZBAN_LEGACY_SECRET_KEY: null
+
+  # -- Existing Secret with env vars (added last to envFrom, overrides the chart Secret)
+  existingSecret: ""
+  extraEnv: []
+  extraEnvFrom: []
+
+  # -- TCP probes on APP_PORT
+  startupProbe:
+    enabled: true
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 24
+  livenessProbe:
+    enabled: true
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readinessProbe:
+    enabled: true
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  resources: {}
+  securityContext: {}
+  extraVolumeMounts: []
+
+# =============================================================================
+# Routing: Gateway API or Istio (ingress side only, no in-mesh mTLS).
+# Metrics (:3001) are never exposed.
+# =============================================================================
+routing:
+  # -- none | gatewayApi | istio
+  type: none
+
+  hosts:
+    # -- Public panel host; also used as PANEL_DOMAIN unless panel.env.PANEL_DOMAIN is set
+    panel: panel.example.com
+    # -- Subscription page host (used when subscriptionPage.enabled).
+    # Empty -> served on the panel host under /<CUSTOM_SUB_PREFIX>
+    sub: ""
+
+  tls:
+    # -- Serve HTTPS (listener / server on 443) and redirect HTTP to HTTPS
+    enabled: true
+    # -- TLS Secret name; empty -> <fullname>-tls (issued by certManager when enabled)
+    secretName: ""
+    httpsRedirect: true
+
+  # -- Skip CRD presence checks (offline `helm template`)
+  skipCrdCheck: false
+  # -- Used to build FQDN service names for Istio destinations
+  clusterDomain: cluster.local
+
+  # ---------------------------------------------------------------------------
+  # Gateway API (gateway.networking.k8s.io/v1): HTTPRoute per host
+  # ---------------------------------------------------------------------------
+  gatewayApi:
+    # -- Existing (shared) Gateway listeners to attach HTTPS routes to.
+    # Ignored when createGateway=true.
+    parentRefs: []
+    #  - name: public-gw
+    #    namespace: gateway-system
+    #    sectionName: https
+    # -- Listeners for the HTTP->HTTPS redirect route (shared Gateway only).
+    # Empty -> no redirect route is created.
+    httpRedirectParentRefs: []
+    #  - name: public-gw
+    #    namespace: gateway-system
+    #    sectionName: http
+    annotations: {}
+    labels: {}
+    # -- HTTPRoute rule timeouts, e.g. {request: 60s, backendRequest: 60s}
+    timeouts: {}
+
+    # -- Create a dedicated Gateway for this release
+    createGateway: false
+    gateway:
+      # -- Empty -> <fullname>
+      name: ""
+      # -- GatewayClass (required with createGateway)
+      className: ""
+      annotations: {}
+      labels: {}
+      # -- Custom listeners; empty -> http:80 (+ https:443 with routing.tls)
+      listeners: []
+      # -- spec.infrastructure (labels/annotations/parametersRef for the data plane)
+      infrastructure: {}
+
+  # ---------------------------------------------------------------------------
+  # Istio (networking.istio.io): VirtualService per host
+  # ---------------------------------------------------------------------------
+  istio:
+    apiVersion: networking.istio.io/v1
+    # -- Existing istio Gateways ("namespace/name"). Ignored when createGateway=true.
+    gateways: []
+    #  - istio-system/public-gw
+    virtualService:
+      annotations: {}
+      labels: {}
+      # -- Per-route timeout, e.g. 60s
+      timeout: ""
+      # -- HTTPRetry, e.g. {attempts: 3, perTryTimeout: 10s, retryOn: "5xx,connect-failure"}
+      retries: {}
+      # -- Extra headers manipulation passed to each route
+      headers: {}
+
+    # -- Create an istio Gateway for this release (in the release namespace)
+    createGateway: false
+    gateway:
+      # -- Empty -> <fullname>
+      name: ""
+      # -- Namespace of the ingress gateway workload (also for shared gateways).
+      # The TLS secret (credentialName) must live there; certManager puts the
+      # Certificate (and a namespaced Issuer) into it.
+      namespace: istio-system
+      selector:
+        istio: ingressgateway
+      annotations: {}
+      labels: {}
+
+    # -- Gateway server port numbers (own Gateway servers and port matches in
+    # the VirtualService when the redirect is done there)
+    ports:
+      http: 80
+      https: 443
+    # -- Where HTTP -> HTTPS redirect is done: auto | gateway | virtualService.
+    # gateway: `tls.httpsRedirect` on the Gateway server (also redirects ACME
+    # HTTP-01 challenges, so the challenge fails).
+    # virtualService: a catch-all redirect route on the HTTP port; Istio puts
+    # catch-all routes last, so the cert-manager challenge route still matches.
+    # auto: virtualService with certManager HTTP-01, gateway otherwise.
+    redirectMode: auto
+
+# =============================================================================
+# cert-manager: ACME Issuer / ClusterIssuer and a Certificate for routing.tls.
+# Requires cert-manager in the cluster.
+#
+# Certificate namespace:
+#   - istio: the ingress gateway workload namespace (routing.istio.gateway.namespace),
+#     credentialName is only read from there;
+#   - gatewayApi / none: the release namespace. With a shared Gateway in another
+#     namespace a ReferenceGrant is created so its listener may reference the Secret.
+# =============================================================================
+certManager:
+  enabled: false
+  # -- Skip CRD presence checks (offline `helm template`)
+  skipCrdCheck: false
+
+  issuer:
+    # -- Create the issuer; false -> reference an existing one by kind/name
+    create: true
+    # -- Issuer | ClusterIssuer
+    kind: Issuer
+    # -- Empty -> <fullname> (Issuer) / <namespace>-<fullname> (ClusterIssuer).
+    # Required with create=false.
+    name: ""
+    # -- Issuer API group (for external issuers referenced with create=false)
+    group: cert-manager.io
+    annotations: {}
+    labels: {}
+    acme:
+      server: https://acme-v02.api.letsencrypt.org/directory
+      # -- Optional ACME account email
+      email: ""
+      # -- ACME account key Secret; empty -> <issuer name>-account-key
+      privateKeySecretRef: ""
+      # -- External Account Binding, passed as is (ZeroSSL, Google, ...)
+      externalAccountBinding: {}
+    # -- http01 | dns01. Also tells routing how to treat HTTP-01 challenges
+    # when an existing issuer is used (create=false).
+    solver: http01
+    http01:
+      # -- routing.type=gatewayApi: solver HTTPRoute parents (HTTP listener).
+      # Empty -> own Gateway `http` listener, or routing.gatewayApi.httpRedirectParentRefs.
+      gatewayHTTPRoute:
+        parentRefs: []
+        labels: {}
+      # -- routing.type=istio: Ingress solver, passed as is. Istio serves Ingresses
+      # of class `istio` on its default ingress gateway.
+      ingress:
+        class: istio
+    dns01:
+      # -- cloudflare | route53 | rfc2136 | webhook
+      provider: cloudflare
+      # Secret refs live in the Issuer namespace (Issuer) or in the cert-manager
+      # cluster resource namespace (ClusterIssuer).
+      cloudflare:
+        apiTokenSecretRef:
+          name: ""
+          key: api-token
+      route53:
+        region: ""
+        hostedZoneID: ""
+        role: ""
+        # -- Empty -> ambient credentials (IRSA / instance profile)
+        accessKeyIDSecretRef: {}
+        secretAccessKeySecretRef: {}
+      rfc2136:
+        nameserver: ""
+        tsigKeyName: ""
+        tsigAlgorithm: HMACSHA512
+        tsigSecretSecretRef:
+          name: ""
+          key: tsig-secret
+      webhook:
+        groupName: ""
+        solverName: ""
+        config: {}
+    # -- Solver selector (dnsNames / dnsZones / matchLabels)
+    selector: {}
+    # -- Raw ACME solvers; non-empty -> replaces everything built from solver/http01/dns01
+    solvers: []
+
+  certificate:
+    create: true
+    # -- Empty -> by routing.type (see above).
+    # The Secret name is routing.tls.secretName (<fullname>-tls).
+    namespace: ""
+    # -- Empty -> routing hosts (panel + subscription page)
+    dnsNames: []
+    # -- e.g. 2160h
+    duration: ""
+    # -- e.g. 720h
+    renewBefore: ""
+    privateKey:
+      algorithm: ECDSA
+      size: 256
+      rotationPolicy: Always
+    # -- Labels/annotations for the generated Secret
+    secretTemplate: {}
+    annotations: {}
+    labels: {}
+
+  # -- Gateway API with a shared Gateway in another namespace: allow its
+  # listeners to reference the TLS Secret from the release namespace
+  referenceGrant:
+    create: true
+    apiVersion: gateway.networking.k8s.io/v1beta1
+    # -- Gateway namespaces; empty -> namespaces of routing.gatewayApi.parentRefs
+    fromNamespaces: []
+
+# =============================================================================
+# Database
+# =============================================================================
+database:
+  # -- external | cnpg
+  mode: external
+
+  external:
+    # -- postgresql://user:password@host:5432/db  (stored in the panel Secret)
+    url: ""
+    # -- Existing Secret holding DATABASE_URL (takes precedence over url)
+    existingSecret: ""
+    existingSecretKey: uri
+
+  # ---------------------------------------------------------------------------
+  # CloudNativePG cluster (requires the CNPG operator in the cluster).
+  # DATABASE_URL is taken from the operator-generated Secret <cluster>-app (key: uri).
+  # ---------------------------------------------------------------------------
+  cnpg:
+    # -- Cluster name; empty -> <fullname>-pg
+    nameOverride: ""
+    # -- Number of PostgreSQL instances: 1 = primary only, 3 = primary + 2 standby
+    instances: 1
+    imageName: ghcr.io/cloudnative-pg/postgresql:18
+    # -- unsupervised | supervised
+    primaryUpdateStrategy: unsupervised
+    database: remnawave
+    owner: remnawave
+    # -- Existing kubernetes.io/basic-auth Secret with the owner credentials
+    # (empty -> generated by the operator)
+    ownerSecret: ""
+    storage:
+      size: 10Gi
+      storageClass: ""
+    # -- Optional separate WAL volume, e.g. {size: 2Gi, storageClass: ""}
+    walStorage: {}
+    resources: {}
+    postgresql:
+      parameters:
+        # -- The panel requires UTC
+        timezone: UTC
+      pg_hba: []
+    # -- CNPG anti-affinity between instances (only matters with instances > 1)
+    podAntiAffinity:
+      enabled: true
+      # -- preferred | required
+      type: preferred
+      topologyKey: kubernetes.io/hostname
+    # -- Placement; overrides the global `scheduling` block.
+    # affinity.nodeAffinity / podAffinity / podAntiAffinity are mapped to the CNPG
+    # fields nodeAffinity / additionalPodAffinity / additionalPodAntiAffinity.
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    # -- Passed as is to spec.monitoring
+    monitoring: {}
+    # -- Passed as is to spec.backup (barman / plugins), configured later
+    backup: {}
+    # -- Labels/annotations propagated by CNPG to pods, PVCs and services
+    inheritedMetadata: {}
+    # -- Keep the Cluster (and its PVCs) on `helm uninstall`
+    keepOnUninstall: true
+    # -- Extra fields merged into the Cluster spec
+    extraSpec: {}
+    # -- Skip the CRD presence check (e.g. `helm template` without --api-versions)
+    skipCrdCheck: false
+
+  # ---------------------------------------------------------------------------
+  # initContainer that blocks panel start until PostgreSQL accepts connections
+  # (pg_isready against DATABASE_URL). Works for both modes.
+  # ---------------------------------------------------------------------------
+  waitForDb:
+    enabled: true
+    image:
+      repository: postgres
+      tag: 18-alpine
+      digest: ""
+      pullPolicy: IfNotPresent
+    # -- Seconds between attempts
+    interval: 2
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        memory: 64Mi
+    securityContext:
+      runAsUser: 70
+      runAsGroup: 70
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+
+# =============================================================================
+# Valkey
+# =============================================================================
+valkey:
+  enabled: true
+  # -- standalone: own Deployment + Service, TCP.
+  # sidecar: container in the panel pod, unix socket (data is lost on each panel rollout).
+  mode: standalone
+  image:
+    repository: valkey/valkey
+    tag: 9-alpine
+    digest: ""
+    pullPolicy: IfNotPresent
+  port: 6379
+  # -- Socket path in sidecar mode
+  socketPath: /var/run/valkey/valkey.sock
+  # -- REDIS_DB passed to the panel (unless panel.env.REDIS_DB is set)
+  db: 1
+  maxmemory: ""
+  maxmemoryPolicy: noeviction
+  logLevel: warning
+  # -- Additional valkey-server arguments
+  extraArgs: []
+
+  auth:
+    enabled: false
+    # -- Empty -> generated once and kept across upgrades
+    password: ""
+    existingSecret: ""
+    existingSecretPasswordKey: password
+
+  service:
+    type: ClusterIP
+    annotations: {}
+
+  startupProbe:
+    enabled: true
+    periodSeconds: 2
+    timeoutSeconds: 3
+    failureThreshold: 30
+  livenessProbe:
+    enabled: true
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readinessProbe:
+    enabled: true
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  resources: {}
+  # -- Applied to the standalone pod only
+  podSecurityContext:
+    fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+  podAnnotations: {}
+  podLabels: {}
+  # -- Standalone Valkey pod placement (sidecar mode follows panel.*).
+  # Overrides the global `scheduling` block, see above.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+
+# -- Used when valkey.enabled=false
+externalRedis:
+  host: ""
+  port: 6379
+  # -- Unix socket path (mount it via panel.extraVolumes); excludes host/port
+  socket: ""
+  username: ""
+  password: ""
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+# =============================================================================
+# Metrics: prometheus-operator ServiceMonitor for the panel metrics port
+# (/metrics, HTTP Basic auth with METRICS_USER / METRICS_PASS).
+# =============================================================================
+metrics:
+  serviceMonitor:
+    enabled: false
+    # -- Skip the CRD presence check (offline `helm template`)
+    skipCrdCheck: false
+    # -- Labels the Prometheus serviceMonitorSelector matches, e.g. {release: kube-prometheus-stack}
+    labels: {}
+    annotations: {}
+    interval: 30s
+    scrapeTimeout: ""
+    honorLabels: false
+    relabelings: []
+    metricRelabelings: []
+    basicAuth:
+      # -- Secret with both credentials (e.g. the one in panel.existingSecret).
+      # Empty -> METRICS_PASS from the panel Secret and METRICS_USER from
+      # panel.env (copied into <fullname>-metrics-auth).
+      existingSecret: ""
+      usernameKey: METRICS_USER
+      passwordKey: METRICS_PASS
+
+# =============================================================================
+# NetworkPolicy (ingress only; egress is not restricted).
+#   panel pod: HTTP (+ subscription page) from ingressFrom, metrics from metricsFrom;
+#   standalone Valkey: only from the panel pod.
+# Kubelet probes are node-local and are allowed by common CNIs (Cilium, Calico).
+# Requires a CNI that enforces NetworkPolicy.
+# =============================================================================
+networkPolicy:
+  enabled: false
+  # -- Peers allowed to reach the panel HTTP port and the subscription page
+  # (the ingress gateway). Empty -> any source.
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: istio-system
+  #    podSelector:
+  #      matchLabels:
+  #        istio: ingressgateway
+  # -- Peers allowed to scrape the metrics port. Empty -> nobody
+  metricsFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: monitoring
+  # -- Extra raw ingress rules for the panel pod
+  extraIngress: []

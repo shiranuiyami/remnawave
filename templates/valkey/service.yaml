@@ -1,0 +1,22 @@
+{{- if and .Values.valkey.enabled (eq .Values.valkey.mode "standalone") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "remnawave.valkey.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+  {{- with merge (deepCopy .Values.valkey.service.annotations) .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.valkey.service.type }}
+  selector:
+    {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+  ports:
+    - name: valkey
+      port: {{ .Values.valkey.port }}
+      targetPort: valkey
+      protocol: TCP
+      appProtocol: redis
+{{- end }}

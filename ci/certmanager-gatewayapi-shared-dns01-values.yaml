@@ -1,0 +1,32 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+routing:
+  type: gatewayApi
+  skipCrdCheck: true
+  gatewayApi:
+    parentRefs:
+      - name: public-gw
+        namespace: gateway-system
+        sectionName: https
+    httpRedirectParentRefs:
+      - name: public-gw
+        namespace: gateway-system
+        sectionName: http
+certManager:
+  enabled: true
+  skipCrdCheck: true
+  issuer:
+    kind: ClusterIssuer
+    solver: dns01
+    dns01:
+      provider: cloudflare
+      cloudflare:
+        apiTokenSecretRef:
+          name: cloudflare-api-token
+    selector:
+      dnsZones: [example.com]
+  certificate:
+    dnsNames: [panel.example.com, "*.sub.example.com"]
+    duration: 2160h
+    renewBefore: 720h

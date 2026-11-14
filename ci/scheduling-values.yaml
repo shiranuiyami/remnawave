@@ -1,0 +1,18 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+scheduling:
+  nodeSelector:
+    node-role.kubernetes.io/remnawave: ""
+    topology.kubernetes.io/zone: zone-a
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: remnawave
+      effect: NoSchedule
+valkey:
+  nodeSelector:
+    topology.kubernetes.io/zone: zone-b
+  tolerations:
+    - key: cache
+      operator: Exists

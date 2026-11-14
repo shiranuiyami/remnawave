@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "remnawave.panel.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "panel") | nindent 4 }}
+    {{- with .Values.panel.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge (deepCopy .Values.panel.service.annotations) .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.panel.service.type }}
+  selector:
+    {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "panel") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ include "remnawave.panel.appPort" . }}
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+    - name: metrics
+      port: {{ include "remnawave.panel.metricsPort" . }}
+      targetPort: metrics
+      protocol: TCP
+      appProtocol: http
+    {{- if include "remnawave.sub.enabled" . }}
+    - name: sub
+      port: {{ include "remnawave.sub.port" . }}
+      targetPort: sub
+      protocol: TCP
+      appProtocol: http
+    {{- end }}

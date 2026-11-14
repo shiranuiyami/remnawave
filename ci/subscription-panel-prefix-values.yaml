@@ -1,0 +1,16 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+valkey:
+  mode: sidecar
+routing:
+  type: istio
+  skipCrdCheck: true
+  istio:
+    createGateway: true
+subscriptionPage:
+  enabled: true
+  env:
+    CUSTOM_SUB_PREFIX: /s/
+    MARZBAN_LEGACY_LINK_ENABLED: true
+  existingSecret: remnawave-sub-token

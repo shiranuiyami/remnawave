@@ -1,0 +1,9 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+valkey:
+  enabled: false
+externalRedis:
+  host: redis.cache.svc
+  username: rw
+  existingSecret: redis-creds

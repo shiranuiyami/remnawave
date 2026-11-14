@@ -1,0 +1,81 @@
+{{- if eq .Values.routing.type "istio" }}
+{{- $i := .Values.routing.istio }}
+{{- $vs := $i.virtualService }}
+{{- $gateways := $i.gateways }}
+{{- if $i.createGateway }}
+{{- $gateways = list (printf "%s/%s" .Release.Namespace (include "remnawave.routing.istio.gatewayName" .)) }}
+{{- end }}
+{{- $vsRedirect := include "remnawave.routing.istio.vsRedirect" . }}
+{{- $svc := printf "%s.%s.svc.%s" (include "remnawave.panel.fullname" .) .Release.Namespace .Values.routing.clusterDomain }}
+{{- range $entry := include "remnawave.routing.model" . | fromYamlArray }}
+---
+apiVersion: {{ $i.apiVersion }}
+kind: VirtualService
+metadata:
+  name: {{ printf "%s-%s" (include "remnawave.fullname" $) $entry.name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" $ "component" "routing") | nindent 4 }}
+    {{- with $vs.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge (deepCopy $vs.annotations) $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  hosts:
+    - {{ $entry.host | quote }}
+  gateways:
+    {{- toYaml $gateways | nindent 4 }}
+  http:
+    {{- if $vsRedirect }}
+    {{- /* catch-all on the HTTP port: Istio orders catch-all routes last when
+           merging hosts, so cert-manager's ACME challenge route still matches */}}
+    - name: https-redirect
+      match:
+        - port: {{ $i.ports.http }}
+      redirect:
+        scheme: https
+        redirectCode: 301
+    {{- end }}
+    {{- range $entry.rules }}
+    - name: {{ .name }}
+      match:
+        {{- if eq .path "/" }}
+        - uri:
+            prefix: /
+          {{- if $vsRedirect }}
+          port: {{ $i.ports.https }}
+          {{- end }}
+        {{- else }}
+        {{- /* segment-aware prefix: /sub and /sub/..., but not /subscriptions */}}
+        - uri:
+            exact: {{ .path }}
+          {{- if $vsRedirect }}
+          port: {{ $i.ports.https }}
+          {{- end }}
+        - uri:
+            prefix: {{ printf "%s/" .path }}
+          {{- if $vsRedirect }}
+          port: {{ $i.ports.https }}
+          {{- end }}
+        {{- end }}
+      route:
+        - destination:
+            host: {{ $svc }}
+            port:
+              number: {{ .port }}
+      {{- with $vs.timeout }}
+      timeout: {{ . }}
+      {{- end }}
+      {{- with $vs.retries }}
+      retries:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $vs.headers }}
+      headers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

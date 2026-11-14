@@ -1,0 +1,70 @@
+{{- $sm := .Values.metrics.serviceMonitor }}
+{{- if $sm.enabled }}
+{{- $auth := $sm.basicAuth }}
+{{- if not $auth.existingSecret }}
+---
+# METRICS_USER lives in the panel ConfigMap; basicAuth needs it in a Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "remnawave.metrics.authSecretName" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "metrics") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+type: Opaque
+data:
+  username: {{ include "remnawave.envValue" (index .Values.panel.env "METRICS_USER") | b64enc }}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "remnawave.panel.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "metrics") | nindent 4 }}
+    {{- with $sm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge (deepCopy $sm.annotations) .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "panel") | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http
+      {{- with $sm.interval }}
+      interval: {{ . }}
+      {{- end }}
+      {{- with $sm.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+      {{- if $sm.honorLabels }}
+      honorLabels: true
+      {{- end }}
+      basicAuth:
+        username:
+          name: {{ default (include "remnawave.metrics.authSecretName" .) $auth.existingSecret }}
+          key: {{ ternary $auth.usernameKey "username" (ne $auth.existingSecret "") }}
+        password:
+          name: {{ default (include "remnawave.panel.fullname" .) $auth.existingSecret }}
+          key: {{ ternary $auth.passwordKey "METRICS_PASS" (ne $auth.existingSecret "") }}
+      {{- with $sm.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $sm.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

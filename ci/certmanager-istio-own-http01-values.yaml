@@ -1,0 +1,13 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+routing:
+  type: istio
+  skipCrdCheck: true
+  istio:
+    createGateway: true
+certManager:
+  enabled: true
+  skipCrdCheck: true
+  issuer:
+    solver: http01

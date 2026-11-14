@@ -1,0 +1,104 @@
+suite: panel env (ConfigMap / Secret)
+templates:
+  - panel/configmap.yaml
+  - panel/secret.yaml
+release:
+  name: rw
+  namespace: remnawave
+set:
+  database.external.url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+tests:
+  - it: renders scalars, lists as JSON and computed domains
+    template: panel/configmap.yaml
+    asserts:
+      - equal: { path: data.APP_PORT, value: "3000" }
+      - equal: { path: data.IS_TELEGRAM_NOTIFICATIONS_ENABLED, value: "false" }
+      - equal: { path: data.BANDWIDTH_USAGE_NOTIFICATIONS_THRESHOLD, value: "[60,80]" }
+      - equal: { path: data.EXPIRATION_NOTIFICATIONS, value: "[-72,-48,-24,24]" }
+      - equal: { path: data.PANEL_DOMAIN, value: panel.example.com }
+      - equal: { path: data.SUB_PUBLIC_DOMAIN, value: panel.example.com/api/sub }
+      - equal: { path: data.REDIS_DB, value: "1" }
+
+  - it: skips null and empty values
+    template: panel/configmap.yaml
+    set:
+      panel.env.TELEGRAM_BOT_API_ROOT: ""
+    asserts:
+      - notExists: { path: data.WORKER_INSTANCES }
+      - notExists: { path: data.TELEGRAM_BOT_API_ROOT }
+
+  - it: renders whole numbers without a decimal part
+    template: panel/configmap.yaml
+    set:
+      panel.env.EXPORT_TO_STREAM_MAXLEN: 50000
+      panel.env.USER_USAGE_IGNORE_BELOW_BYTES: 1048576
+    asserts:
+      - equal: { path: data.EXPORT_TO_STREAM_MAXLEN, value: "50000" }
+      - equal: { path: data.USER_USAGE_IGNORE_BELOW_BYTES, value: "1048576" }
+
+  - it: passes unknown upstream variables through
+    template: panel/configmap.yaml
+    set:
+      panel.env.SOME_NEW_UPSTREAM_VAR: hello
+    asserts:
+      - equal: { path: data.SOME_NEW_UPSTREAM_VAR, value: hello }
+
+  - it: explicit PANEL_DOMAIN / SUB_PUBLIC_DOMAIN win
+    template: panel/configmap.yaml
+    set:
+      panel.env.PANEL_DOMAIN: admin.example.org
+      panel.env.SUB_PUBLIC_DOMAIN: links.example.org
+    asserts:
+      - equal: { path: data.PANEL_DOMAIN, value: admin.example.org }
+      - equal: { path: data.SUB_PUBLIC_DOMAIN, value: links.example.org }
+
+  - it: explicit REDIS_DB wins over valkey.db
+    template: panel/configmap.yaml
+    set:
+      panel.env.REDIS_DB: 5
+    asserts:
+      - equal: { path: data.REDIS_DB, value: "5" }
+
+  - it: REDIS_USERNAME comes from externalRedis
+    template: panel/configmap.yaml
+    set:
+      valkey.enabled: false
+      externalRedis.host: redis.cache.svc
+      externalRedis.username: rw
+    asserts:
+      - equal: { path: data.REDIS_USERNAME, value: rw }
+      - notExists: { path: data.REDIS_DB }
+
+  - it: stores DATABASE_URL and explicit secrets
+    template: panel/secret.yaml
+    set:
+      panel.secretEnv.APP_SECRET: app-secret-value
+      panel.secretEnv.METRICS_PASS: s3cr3t
+    asserts:
+      - equal: { path: data.DATABASE_URL, value: cG9zdGdyZXNxbDovL3JlbW5hd2F2ZTpzZWNyZXRAcGcuZGIuc3ZjOjU0MzIvcmVtbmF3YXZl }
+      - equal: { path: data.APP_SECRET, value: YXBwLXNlY3JldC12YWx1ZQ== }
+      - equal: { path: data.METRICS_PASS, value: czNjcjN0 }
+      - notExists: { path: data.TELEGRAM_BOT_TOKEN }
+
+  - it: generates APP_SECRET / METRICS_PASS when empty
+    template: panel/secret.yaml
+    asserts:
+      - exists: { path: data.APP_SECRET }
+      - exists: { path: data.METRICS_PASS }
+
+  - it: no DATABASE_URL in the chart Secret with external.existingSecret
+    template: panel/secret.yaml
+    set:
+      database.external.url: ""
+      database.external.existingSecret: remnawave-db
+    asserts:
+      - notExists: { path: data.DATABASE_URL }
+
+  - it: stores the external Redis password
+    template: panel/secret.yaml
+    set:
+      valkey.enabled: false
+      externalRedis.host: redis.cache.svc
+      externalRedis.password: redis-pass
+    asserts:
+      - equal: { path: data.REDIS_PASSWORD, value: cmVkaXMtcGFzcw== }

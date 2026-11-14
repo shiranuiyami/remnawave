@@ -1,0 +1,12 @@
+database:
+  external:
+    existingSecret: remnawave-db
+valkey:
+  mode: sidecar
+  auth:
+    enabled: true
+panel:
+  env:
+    REDIS_DB: 3
+    WORKER_INSTANCES: 2
+  existingSecret: remnawave-extra

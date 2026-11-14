@@ -1,0 +1,17 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+routing:
+  type: gatewayApi
+  skipCrdCheck: true
+  gatewayApi:
+    createGateway: true
+    gateway:
+      className: cilium
+certManager:
+  enabled: true
+  skipCrdCheck: true
+  issuer:
+    acme:
+      email: admin@example.com
+    solver: http01

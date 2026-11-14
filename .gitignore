@@ -1,0 +1,15 @@
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.bak
+*.tmp
+*.orig
+
+# Helm artifacts
+*.tgz
+charts/
+
+# Local working notes
+PLAN.md

@@ -1,0 +1,15 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+routing:
+  type: istio
+  skipCrdCheck: true
+  istio:
+    gateways:
+      - istio-system/public-gw
+    virtualService:
+      timeout: 60s
+      retries:
+        attempts: 3
+        perTryTimeout: 20s
+        retryOn: connect-failure,refused-stream,503

@@ -1,0 +1,46 @@
+{{- if and (eq .Values.routing.type "istio") .Values.routing.istio.createGateway }}
+{{- $i := .Values.routing.istio }}
+{{- $gw := $i.gateway }}
+{{- $hosts := include "remnawave.routing.hosts" . }}
+{{- $tls := .Values.routing.tls }}
+{{- $ports := $i.ports }}
+apiVersion: {{ $i.apiVersion }}
+kind: Gateway
+metadata:
+  name: {{ include "remnawave.routing.istio.gatewayName" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "routing") | nindent 4 }}
+    {{- with $gw.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge (deepCopy $gw.annotations) .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    {{- toYaml $gw.selector | nindent 4 }}
+  servers:
+    - port:
+        number: {{ $ports.http }}
+        name: http
+        protocol: HTTP
+      hosts:
+        {{- $hosts | nindent 8 }}
+      {{- if and $tls.enabled $tls.httpsRedirect (not (include "remnawave.routing.istio.vsRedirect" .)) }}
+      tls:
+        httpsRedirect: true
+      {{- end }}
+    {{- if $tls.enabled }}
+    - port:
+        number: {{ $ports.https }}
+        name: https
+        protocol: HTTPS
+      hosts:
+        {{- $hosts | nindent 8 }}
+      tls:
+        mode: SIMPLE
+        # Secret must exist in the ingress gateway namespace ({{ $gw.namespace }})
+        credentialName: {{ include "remnawave.routing.tlsSecretName" . }}
+    {{- end }}
+{{- end }}

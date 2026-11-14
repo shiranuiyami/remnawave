@@ -1,0 +1,149 @@
+suite: ServiceMonitor and NetworkPolicy
+templates:
+  - monitoring/servicemonitor.yaml
+  - networkpolicy.yaml
+  - panel/deployment.yaml
+  # included by deployment.yaml for checksum annotations
+  - panel/configmap.yaml
+  - panel/secret.yaml
+  - subscription/configmap.yaml
+  - subscription/secret.yaml
+release:
+  name: rw
+  namespace: remnawave
+set:
+  database.external.url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+tests:
+  - it: renders nothing by default
+    template: monitoring/servicemonitor.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: renders no NetworkPolicy by default
+    template: networkpolicy.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: scrapes the metrics port with Basic auth from the chart Secrets
+    template: monitoring/servicemonitor.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.skipCrdCheck: true
+      metrics.serviceMonitor.labels.release: kube-prometheus-stack
+    asserts:
+      - hasDocuments: { count: 2 }
+      - documentIndex: 0
+        isKind: { of: Secret }
+      - documentIndex: 0
+        equal: { path: data.username, value: admin, decodeBase64: true }
+      - documentIndex: 1
+        isKind: { of: ServiceMonitor }
+      - documentIndex: 1
+        equal: { path: metadata.labels.release, value: kube-prometheus-stack }
+      - documentIndex: 1
+        equal: { path: 'spec.selector.matchLabels["app.kubernetes.io/component"]', value: panel }
+      - documentIndex: 1
+        equal:
+          path: spec.endpoints[0]
+          value:
+            port: metrics
+            path: /metrics
+            scheme: http
+            interval: 30s
+            basicAuth:
+              username: { name: rw-remnawave-metrics-auth, key: username }
+              password: { name: rw-remnawave, key: METRICS_PASS }
+
+  - it: takes both credentials from an existing Secret
+    template: monitoring/servicemonitor.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.skipCrdCheck: true
+      metrics.serviceMonitor.basicAuth.existingSecret: panel-creds
+    asserts:
+      - hasDocuments: { count: 1 }
+      - equal:
+          path: spec.endpoints[0].basicAuth
+          value:
+            username: { name: panel-creds, key: METRICS_USER }
+            password: { name: panel-creds, key: METRICS_PASS }
+
+  - it: requires the ServiceMonitor CRD
+    template: panel/deployment.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+    asserts:
+      - failedTemplate: { errorPattern: "CRD monitoring.coreos.com/v1 ServiceMonitor not found" }
+
+  - it: passes the CRD check when the API is available
+    template: panel/deployment.yaml
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1/ServiceMonitor
+    set:
+      metrics.serviceMonitor.enabled: true
+    asserts:
+      - isKind: { of: Deployment }
+
+  - it: restricts panel ingress to the gateway and metrics to monitoring
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.ingressFrom:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: istio-system } }
+      networkPolicy.metricsFrom:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+    asserts:
+      - hasDocuments: { count: 2 }
+      - documentIndex: 0
+        equal: { path: spec.policyTypes, value: [Ingress] }
+      - documentIndex: 0
+        equal: { path: "spec.ingress[0].ports", value: [{ port: http, protocol: TCP }] }
+      - documentIndex: 0
+        equal: { path: "spec.ingress[0].from[0].namespaceSelector.matchLabels", value: { kubernetes.io/metadata.name: istio-system } }
+      - documentIndex: 0
+        equal: { path: "spec.ingress[1].ports", value: [{ port: metrics, protocol: TCP }] }
+      - documentIndex: 1
+        equal: { path: metadata.name, value: rw-remnawave-valkey }
+      - documentIndex: 1
+        equal: { path: "spec.ingress[0].from[0].podSelector.matchLabels['app.kubernetes.io/component']", value: panel }
+
+  - it: opens the panel port to any source and closes metrics by default
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - documentIndex: 0
+        notExists: { path: "spec.ingress[0].from" }
+      - documentIndex: 0
+        lengthEqual: { path: spec.ingress, count: 1 }
+
+  - it: adds the subscription page port and skips Valkey policy in sidecar mode
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+      valkey.mode: sidecar
+      subscriptionPage.enabled: true
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: token
+      routing.hosts.sub: sub.example.com
+    asserts:
+      - hasDocuments: { count: 1 }
+      - contains: { path: "spec.ingress[0].ports", content: { port: sub, protocol: TCP } }
+
+  - it: refuses a NetworkPolicy that blocks the ServiceMonitor
+    template: panel/deployment.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.skipCrdCheck: true
+      networkPolicy.enabled: true
+    asserts:
+      - failedTemplate: { errorPattern: "set networkPolicy.metricsFrom" }
+
+  - it: requires METRICS_USER for the generated auth Secret
+    template: panel/deployment.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.skipCrdCheck: true
+      panel.env.METRICS_USER: null
+    asserts:
+      - failedTemplate: { errorPattern: "set panel.env.METRICS_USER" }

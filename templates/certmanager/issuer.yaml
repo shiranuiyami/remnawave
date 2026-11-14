@@ -1,0 +1,35 @@
+{{- $cm := .Values.certManager }}
+{{- if and $cm.enabled $cm.issuer.create }}
+{{- $i := $cm.issuer }}
+{{- $name := include "remnawave.certManager.issuerName" . }}
+apiVersion: cert-manager.io/v1
+kind: {{ $i.kind }}
+metadata:
+  name: {{ $name }}
+  {{- if eq $i.kind "Issuer" }}
+  namespace: {{ include "remnawave.certManager.namespace" . }}
+  {{- end }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "tls") | nindent 4 }}
+    {{- with $i.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge (deepCopy $i.annotations) .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  acme:
+    server: {{ $i.acme.server }}
+    {{- with $i.acme.email }}
+    email: {{ . }}
+    {{- end }}
+    privateKeySecretRef:
+      name: {{ default (printf "%s-account-key" $name) $i.acme.privateKeySecretRef }}
+    {{- with $i.acme.externalAccountBinding }}
+    externalAccountBinding:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    solvers:
+      {{- include "remnawave.certManager.solvers" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,126 @@
+suite: panel Deployment (Valkey modes, database, existingSecret)
+templates:
+  - panel/deployment.yaml
+  # included by deployment.yaml for checksum annotations
+  - panel/configmap.yaml
+  - panel/secret.yaml
+  - subscription/configmap.yaml
+  - subscription/secret.yaml
+release:
+  name: rw
+  namespace: remnawave
+capabilities:
+  majorVersion: "1"
+  minorVersion: "30"
+set:
+  database.external.url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+tests:
+  - it: always runs one replica with Recreate
+    template: panel/deployment.yaml
+    asserts:
+      - isKind: { of: Deployment }
+      - equal: { path: spec.replicas, value: 1 }
+      - equal: { path: spec.strategy.type, value: Recreate }
+
+  - it: standalone Valkey is reached over TCP
+    template: panel/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: REDIS_HOST, value: rw-remnawave-valkey }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: REDIS_PORT, value: "6379" }
+      - lengthEqual: { path: spec.template.spec.initContainers, count: 1 }
+      - equal: { path: 'spec.template.spec.initContainers[0].name', value: wait-for-db }
+
+  - it: sidecar Valkey is a native sidecar on k8s >= 1.29
+    template: panel/deployment.yaml
+    set:
+      valkey.mode: sidecar
+    asserts:
+      - equal: { path: 'spec.template.spec.initContainers[0].name', value: valkey }
+      - equal: { path: 'spec.template.spec.initContainers[0].restartPolicy', value: Always }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: REDIS_SOCKET, value: /var/run/valkey/valkey.sock }
+      - lengthEqual: { path: spec.template.spec.containers, count: 1 }
+
+  - it: sidecar Valkey is a regular container on k8s < 1.29
+    template: panel/deployment.yaml
+    capabilities:
+      majorVersion: "1"
+      minorVersion: "28"
+    set:
+      valkey.mode: sidecar
+    asserts:
+      - equal: { path: 'spec.template.spec.containers[1].name', value: valkey }
+      - notExists: { path: 'spec.template.spec.containers[1].restartPolicy' }
+
+  - it: Valkey auth wires REDIS_PASSWORD from the generated Secret
+    template: panel/deployment.yaml
+    set:
+      valkey.auth.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef: { name: rw-remnawave-valkey, key: password }
+
+  - it: Valkey auth with an existing Secret
+    template: panel/deployment.yaml
+    set:
+      valkey.auth.enabled: true
+      valkey.auth.existingSecret: valkey-creds
+      valkey.auth.existingSecretPasswordKey: pass
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef: { name: valkey-creds, key: pass }
+
+  - it: panel.existingSecret is the last envFrom entry
+    template: panel/deployment.yaml
+    set:
+      panel.existingSecret: remnawave-extra
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[2]
+          value: { secretRef: { name: remnawave-extra } }
+
+  - it: DATABASE_URL from database.external.existingSecret
+    template: panel/deployment.yaml
+    set:
+      database.external.url: ""
+      database.external.existingSecret: remnawave-db
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_URL
+            valueFrom:
+              secretKeyRef: { name: remnawave-db, key: uri }
+
+  - it: DATABASE_URL from the CNPG app Secret
+    template: panel/deployment.yaml
+    set:
+      database.mode: cnpg
+      database.cnpg.skipCrdCheck: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_URL
+            valueFrom:
+              secretKeyRef: { name: rw-remnawave-pg-app, key: uri }
+
+  - it: wait-for-db can be disabled
+    template: panel/deployment.yaml
+    set:
+      database.waitForDb.enabled: false
+    asserts:
+      - notExists: { path: spec.template.spec.initContainers }

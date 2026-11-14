@@ -1,0 +1,105 @@
+suite: render-time validation
+templates:
+  - panel/deployment.yaml
+  # included by deployment.yaml for checksum annotations
+  - panel/configmap.yaml
+  - panel/secret.yaml
+  - subscription/configmap.yaml
+  - subscription/secret.yaml
+release:
+  name: rw
+  namespace: remnawave
+set:
+  database.external.url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+tests:
+  - it: renders with minimal values
+    template: panel/deployment.yaml
+    asserts:
+      - isKind: { of: Deployment }
+
+  - it: requires a DATABASE_URL source
+    template: panel/deployment.yaml
+    set:
+      database.external.url: ""
+    asserts:
+      - failedTemplate: { errorPattern: "database.external: set url or existingSecret" }
+
+  - it: rejects chart-managed env
+    template: panel/deployment.yaml
+    set:
+      panel.env.REDIS_HOST: redis
+    asserts:
+      - failedTemplate: { errorPattern: "REDIS_HOST is managed by the chart" }
+
+  - it: rejects the sample APP_SECRET
+    template: panel/deployment.yaml
+    set:
+      panel.secretEnv.APP_SECRET: change_me
+    asserts:
+      - failedTemplate: { errorPattern: "must not be \"change_me\"" }
+
+  - it: CNPG requires its CRD
+    template: panel/deployment.yaml
+    set:
+      database.mode: cnpg
+    asserts:
+      - failedTemplate: { errorPattern: "CRD postgresql.cnpg.io/v1 Cluster not found" }
+
+  - it: CNPG CRD from capabilities
+    template: panel/deployment.yaml
+    capabilities:
+      apiVersions: [postgresql.cnpg.io/v1/Cluster]
+    set:
+      database.mode: cnpg
+    asserts:
+      - isKind: { of: Deployment }
+
+  - it: shared Gateway API needs parentRefs
+    template: panel/deployment.yaml
+    set:
+      routing.type: gatewayApi
+      routing.skipCrdCheck: true
+    asserts:
+      - failedTemplate: { errorPattern: "set parentRefs \\(existing Gateway\\) or createGateway=true" }
+
+  - it: HTTP-01 needs routing
+    template: panel/deployment.yaml
+    set:
+      certManager.enabled: true
+      certManager.skipCrdCheck: true
+    asserts:
+      - failedTemplate: { errorPattern: "http01 needs routing" }
+
+  - it: wildcard is not allowed with HTTP-01
+    template: panel/deployment.yaml
+    set:
+      routing.type: istio
+      routing.skipCrdCheck: true
+      routing.istio.createGateway: true
+      certManager.enabled: true
+      certManager.skipCrdCheck: true
+      certManager.certificate.dnsNames: ["*.example.com"]
+    asserts:
+      - failedTemplate: { errorPattern: "wildcard \"\\*.example.com\" cannot be issued with http01" }
+
+  - it: Istio Gateway redirect breaks HTTP-01
+    template: panel/deployment.yaml
+    set:
+      routing.type: istio
+      routing.skipCrdCheck: true
+      routing.istio.createGateway: true
+      routing.istio.redirectMode: gateway
+      certManager.enabled: true
+      certManager.skipCrdCheck: true
+    asserts:
+      - failedTemplate: { errorPattern: "redirectMode=gateway redirects ACME HTTP-01" }
+
+  - it: subscription page port must not collide with the panel
+    template: panel/deployment.yaml
+    set:
+      subscriptionPage.enabled: true
+      subscriptionPage.env.APP_PORT: 3001
+      subscriptionPage.env.CUSTOM_SUB_PREFIX: s
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: t
+    asserts:
+      - failedTemplate: { errorPattern: "collides with a panel port" }

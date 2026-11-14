@@ -1,0 +1,155 @@
+{{- include "remnawave.validate" . }}
+{{- $sidecar := and .Values.valkey.enabled (eq .Values.valkey.mode "sidecar") }}
+{{- $nativeSidecar := semverCompare ">=1.29-0" .Capabilities.KubeVersion.Version }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "remnawave.panel.fullname" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "panel") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Single replica only: the pm2 scheduler must not be scaled and the
+  # entrypoint runs DB migrations. Scale with API_INSTANCES / WORKER_INSTANCES.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "remnawave.componentSelectorLabels" (dict "ctx" . "component" "panel") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "remnawave.componentLabels" (dict "ctx" . "component" "panel") | nindent 8 }}
+        {{- with .Values.panel.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/panel/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/panel/secret.yaml") . | sha256sum }}
+        {{- if include "remnawave.sub.enabled" . }}
+        checksum/sub-config: {{ include (print $.Template.BasePath "/subscription/configmap.yaml") . | sha256sum }}
+        checksum/sub-secret: {{ include (print $.Template.BasePath "/subscription/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.panel.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "remnawave.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.panel.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.panel.terminationGracePeriodSeconds }}
+      {{- with .Values.panel.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.panel.initContainers (and $sidecar $nativeSidecar) .Values.database.waitForDb.enabled }}
+      initContainers:
+        {{- if and $sidecar $nativeSidecar }}
+        {{- /* native sidecar: starts (and becomes ready) before the panel */}}
+        {{- $valkey := include "remnawave.valkey.container" . | fromYamlArray | first }}
+        {{- $_ := set $valkey "restartPolicy" "Always" }}
+        {{- toYaml (list $valkey) | nindent 8 }}
+        {{- end }}
+        {{- if .Values.database.waitForDb.enabled }}
+        {{- include "remnawave.database.waitContainer" . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.panel.initContainers }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: panel
+          image: {{ include "remnawave.image" (dict "image" .Values.panel.image "default" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.panel.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ include "remnawave.panel.appPort" . }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ include "remnawave.panel.metricsPort" . }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "remnawave.panel.fullname" . }}
+            - secretRef:
+                name: {{ include "remnawave.panel.fullname" . }}
+            {{- with .Values.panel.existingSecret }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+            {{- with .Values.panel.extraEnvFrom }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          {{- $managedEnv := include "remnawave.panel.managedEnv" . | trim }}
+          {{- if or $managedEnv .Values.panel.extraEnv }}
+          env:
+            {{- with $managedEnv }}
+            {{- . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.panel.extraEnv }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- range $kind, $probe := dict "startupProbe" .Values.panel.startupProbe "livenessProbe" .Values.panel.livenessProbe "readinessProbe" .Values.panel.readinessProbe }}
+          {{- if $probe.enabled }}
+          {{ $kind }}:
+            httpGet:
+              path: /health
+              port: metrics
+            {{- toYaml (omit $probe "enabled") | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          {{- with .Values.panel.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.panel.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or $sidecar .Values.panel.extraVolumeMounts }}
+          volumeMounts:
+            {{- if $sidecar }}
+            - name: valkey-socket
+              mountPath: {{ dir .Values.valkey.socketPath }}
+            {{- end }}
+            {{- with .Values.panel.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+        {{- if and $sidecar (not $nativeSidecar) }}
+        {{- include "remnawave.valkey.container" . | nindent 8 }}
+        {{- end }}
+        {{- if include "remnawave.sub.enabled" . }}
+        {{- include "remnawave.sub.container" . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.panel.extraContainers }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+      {{- if or $sidecar .Values.panel.extraVolumes }}
+      volumes:
+        {{- if $sidecar }}
+        - name: valkey-socket
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: valkey-data
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- end }}
+        {{- with .Values.panel.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- include "remnawave.scheduling" (dict "ctx" . "component" .Values.panel) | nindent 6 }}

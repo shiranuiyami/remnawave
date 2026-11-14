@@ -1,0 +1,23 @@
+database:
+  mode: cnpg
+  cnpg:
+    skipCrdCheck: true
+    instances: 3
+    storage:
+      size: 20Gi
+      storageClass: fast-ssd
+    podAntiAffinity:
+      type: required
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - { key: node.kubernetes.io/instance-type, operator: In, values: [db-large] }
+scheduling:
+  nodeSelector:
+    node-role.kubernetes.io/remnawave: ""
+  tolerations:
+    - { key: dedicated, operator: Equal, value: remnawave, effect: NoSchedule }

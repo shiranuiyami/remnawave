@@ -1,0 +1,25 @@
+{{- $nss := include "remnawave.certManager.referenceGrantNamespaces" . | fromYamlArray }}
+{{- if $nss }}
+apiVersion: {{ .Values.certManager.referenceGrant.apiVersion }}
+kind: ReferenceGrant
+metadata:
+  name: {{ printf "%s-tls" (include "remnawave.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ include "remnawave.certManager.namespace" . }}
+  labels:
+    {{- include "remnawave.componentLabels" (dict "ctx" . "component" "tls") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  from:
+    {{- range $nss }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: {{ . }}
+    {{- end }}
+  to:
+    - group: ""
+      kind: Secret
+      name: {{ include "remnawave.routing.tlsSecretName" . }}
+{{- end }}

@@ -1,0 +1,85 @@
+name: chart
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_VERSION: v4.3.1
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: helm lint (defaults)
+        run: helm lint --strict .
+
+      - name: helm lint / template (ci/*.yaml)
+        run: |
+          set -euo pipefail
+          for f in ci/*.yaml; do
+            echo "::group::$f"
+            helm lint --strict . -f "$f"
+            helm template rw . -n remnawave -f "$f" > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: helm unittest
+        run: |
+          # TODO: pin --version once a release is chosen
+          helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+          helm unittest .
+
+  smoke:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: remnawave
+
+      - name: PostgreSQL
+        run: |
+          kubectl create namespace remnawave
+          kubectl -n remnawave apply -f .github/kind/postgres.yaml
+          kubectl -n remnawave rollout status deploy/postgres --timeout=180s
+
+      - name: Install the chart
+        run: |
+          helm install rw . -n remnawave --wait --timeout 10m \
+            --set database.external.url=postgresql://remnawave:remnawave@postgres:5432/remnawave \
+            --set routing.hosts.panel=panel.local
+
+      - name: Health check
+        run: |
+          kubectl -n remnawave port-forward svc/rw-remnawave 3001:3001 &
+          sleep 5
+          curl -fsS http://127.0.0.1:3001/health
+
+      - name: Upgrade keeps generated secrets
+        run: |
+          before=$(kubectl -n remnawave get secret rw-remnawave -o jsonpath='{.data.APP_SECRET}')
+          helm upgrade rw . -n remnawave --reuse-values --wait --timeout 10m
+          after=$(kubectl -n remnawave get secret rw-remnawave -o jsonpath='{.data.APP_SECRET}')
+          test "$before" = "$after"
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl -n remnawave get all
+          kubectl -n remnawave describe pods
+          kubectl -n remnawave logs deploy/rw-remnawave --all-containers --tail=200 || true

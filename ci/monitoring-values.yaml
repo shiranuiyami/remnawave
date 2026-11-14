@@ -1,0 +1,28 @@
+# ServiceMonitor + NetworkPolicy (Istio gateway, kube-prometheus-stack in "monitoring")
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+routing:
+  type: istio
+  skipCrdCheck: true
+  istio:
+    createGateway: true
+metrics:
+  serviceMonitor:
+    enabled: true
+    skipCrdCheck: true
+    labels:
+      release: kube-prometheus-stack
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: istio-system
+      podSelector:
+        matchLabels:
+          istio: ingressgateway
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring

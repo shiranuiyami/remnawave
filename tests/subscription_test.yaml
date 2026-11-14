@@ -1,0 +1,87 @@
+suite: subscription page
+templates:
+  - panel/deployment.yaml
+  - panel/service.yaml
+  - panel/configmap.yaml
+  - panel/secret.yaml
+  - subscription/configmap.yaml
+  - subscription/secret.yaml
+release:
+  name: rw
+  namespace: remnawave
+set:
+  database.external.url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+  subscriptionPage.enabled: true
+  subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: token-from-panel-ui
+  subscriptionPage.env.CUSTOM_SUB_PREFIX: /s/
+tests:
+  - it: is not rendered when disabled
+    set:
+      subscriptionPage.enabled: false
+    template: subscription/configmap.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: adds the container to the panel pod
+    template: panel/deployment.yaml
+    asserts:
+      - equal: { path: "spec.template.spec.containers[1].name", value: subscription-page }
+      - equal: { path: "spec.template.spec.containers[1].ports[0].containerPort", value: 3010 }
+      - exists: { path: 'spec.template.metadata.annotations["checksum/sub-config"]' }
+
+  - it: exposes port sub in the Service
+    template: panel/service.yaml
+    asserts:
+      - contains:
+          path: spec.ports
+          content: { name: sub, port: 3010, targetPort: sub, protocol: TCP, appProtocol: http }
+
+  - it: talks to the panel over localhost and normalises the prefix
+    template: subscription/configmap.yaml
+    asserts:
+      - equal: { path: data.REMNAWAVE_PANEL_URL, value: "http://127.0.0.1:3000" }
+      - equal: { path: data.CUSTOM_SUB_PREFIX, value: s }
+      - notExists: { path: data.MARZBAN_LEGACY_SUBSCRIPTION_VALID_FROM }
+
+  - it: stores the API token in its Secret
+    template: subscription/secret.yaml
+    asserts:
+      - equal: { path: data.REMNAWAVE_API_TOKEN, value: dG9rZW4tZnJvbS1wYW5lbC11aQ== }
+
+  - it: SUB_PUBLIC_DOMAIN on the panel host uses the prefix
+    template: panel/configmap.yaml
+    asserts:
+      - equal: { path: data.SUB_PUBLIC_DOMAIN, value: panel.example.com/s }
+
+  - it: SUB_PUBLIC_DOMAIN on its own host
+    template: panel/configmap.yaml
+    set:
+      routing.hosts.sub: sub.example.com
+      subscriptionPage.env.CUSTOM_SUB_PREFIX: ""
+    asserts:
+      - equal: { path: data.SUB_PUBLIC_DOMAIN, value: sub.example.com }
+
+  - it: SUB_PUBLIC_DOMAIN on its own host with a prefix
+    template: panel/configmap.yaml
+    set:
+      routing.hosts.sub: sub.example.com
+    asserts:
+      - equal: { path: data.SUB_PUBLIC_DOMAIN, value: sub.example.com/s }
+
+  - it: fails without the API token
+    template: panel/deployment.yaml
+    set:
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "set subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN"
+
+  - it: existingSecret replaces the token
+    template: panel/deployment.yaml
+    set:
+      subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: ""
+      subscriptionPage.existingSecret: sub-token
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[1].envFrom[2]
+          value: { secretRef: { name: sub-token } }

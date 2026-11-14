@@ -1,0 +1,15 @@
+database:
+  external:
+    url: postgresql://remnawave:secret@pg.db.svc:5432/remnawave
+certManager:
+  enabled: true
+  skipCrdCheck: true
+  issuer:
+    solver: dns01
+    dns01:
+      provider: route53
+      route53:
+        region: eu-central-1
+        hostedZoneID: Z0123456789
+  certificate:
+    dnsNames: [panel.example.com]
