@@ -1,4 +1,4 @@
-name: Release Helm Chart
+name: release
 
 on:
   push:
@@ -6,21 +6,60 @@ on:
       - 'v*'
 
 permissions:
-      contents: write
+  contents: write   # GitHub Release
+  packages: write   # push to ghcr.io
+
+env:
+  HELM_VERSION: v4.3.1
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
         with:
-          fetch-depth: 0
+          version: ${{ env.HELM_VERSION }}
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+      - name: Check tag matches Chart.yaml version
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(helm show chart . | awk '$1 == "version:" {print $2}')
+          name=$(helm show chart . | awk '$1 == "name:" {print $2}')
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Chart.yaml version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "registry=oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts" >> "$GITHUB_OUTPUT"
 
-      - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
+      - name: helm lint
+        run: helm lint --strict .
+
+      - name: helm unittest
+        run: |
+          helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+          helm unittest .
+
+      - name: Package
+        run: helm package . --destination dist
+
+      - name: Push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "dist/${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tgz" \
+            "${{ steps.meta.outputs.registry }}"
+
+      - name: GitHub Release
         env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tgz \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "Install: \`helm install rw ${{ steps.meta.outputs.registry }}/${{ steps.meta.outputs.name }} --version ${{ steps.meta.outputs.version }}\`"

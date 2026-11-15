@@ -54,6 +54,106 @@ kubectl -n remnawave exec deploy/<release>-remnawave -c panel -- sh -c 'ulimit -
 If the value is low, raise it in the runtime config on the nodes (containerd / CRI-O systemd unit),
 not in the chart.
 
+## Installation
+
+The chart is published as an OCI artifact in GitHub Container Registry:
+
+```
+oci://ghcr.io/shiranuiyami/charts/remnawave
+```
+
+No `helm repo add` is needed, OCI charts are referenced directly:
+
+```sh
+# show the chart and its default values
+helm show chart  oci://ghcr.io/shiranuiyami/charts/remnawave --version 0.1.0
+helm show values oci://ghcr.io/shiranuiyami/charts/remnawave --version 0.1.0 > values.yaml
+
+# install / upgrade
+helm upgrade --install rw oci://ghcr.io/shiranuiyami/charts/remnawave --version 0.1.0 \
+  -n remnawave --create-namespace -f values.yaml
+
+# download the .tgz
+helm pull oci://ghcr.io/shiranuiyami/charts/remnawave --version 0.1.0
+```
+
+Available versions are listed on the
+[package page](https://github.com/shiranuiyami/remnawave/pkgs/container/charts%2Fremnawave)
+and in [GitHub Releases](https://github.com/shiranuiyami/remnawave/releases) (each release also
+has the packaged `.tgz` attached).
+
+### Argo CD
+
+OCI Helm repositories need `enableOCI: "true"` and a URL without the `oci://` scheme:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: remnawave-charts
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: remnawave-charts
+  type: helm
+  enableOCI: "true"
+  url: ghcr.io/shiranuiyami/charts
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: remnawave
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ghcr.io/shiranuiyami/charts
+    chart: remnawave
+    targetRevision: 0.1.0
+    helm:
+      valuesObject: {}   # your values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: remnawave
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+```
+
+See [Secrets, `lookup` and GitOps](#secrets-lookup-and-gitops) before using Argo CD.
+
+### Flux
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: remnawave
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/shiranuiyami/charts/remnawave
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  ref:
+    semver: "0.1.x"
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: rw
+  namespace: remnawave
+spec:
+  interval: 30m
+  chartRef:
+    kind: OCIRepository
+    name: remnawave
+    namespace: flux-system
+  values: {}   # your values
+```
+
 ## Quick start
 
 Minimal install with an external database and an own Gateway API Gateway:
@@ -80,7 +180,8 @@ certManager:
 ```
 
 ```sh
-helm install rw ./remnawave -n remnawave --create-namespace -f values.yaml
+helm install rw oci://ghcr.io/shiranuiyami/charts/remnawave --version 0.1.0 \
+  -n remnawave --create-namespace -f values.yaml
 ```
 
 `helm install` prints NOTES with the service addresses, routes, how to get the metrics password,
@@ -96,7 +197,8 @@ running panel. So the first install takes two steps:
 3. Enable the subscription page and pass the token:
 
    ```sh
-   helm upgrade rw ./remnawave -n remnawave --reuse-values \
+   helm upgrade rw oci://ghcr.io/shiranuiyami/charts/remnawave --version 0.1.0 \
+     -n remnawave --reuse-values \
      --set subscriptionPage.enabled=true \
      --set subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN=<token>
    ```
@@ -295,6 +397,20 @@ helm unittest .        # https://github.com/helm-unittest/helm-unittest
 
 CI (`.github/workflows/ci.yaml`) runs lint, template and unittest, then a smoke install in kind
 with a temporary PostgreSQL.
+
+### Releasing
+
+1. Bump `version` in `Chart.yaml` (and `appVersion` if needed), merge to `master`.
+2. Tag the commit with the same version prefixed by `v` and push the tag:
+
+   ```sh
+   git tag v0.1.1 && git push origin v0.1.1
+   ```
+
+`.github/workflows/release.yaml` checks that the tag matches `Chart.yaml`, runs lint and
+unittest, pushes the chart to `oci://ghcr.io/shiranuiyami/charts/remnawave` and creates a GitHub
+Release with the `.tgz` attached. A version that is already in the registry is overwritten, so
+always bump the version.
 
 ## License
 
