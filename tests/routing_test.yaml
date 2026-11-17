@@ -6,6 +6,7 @@ templates:
   - certmanager/issuer.yaml
   - certmanager/certificate.yaml
   - certmanager/referencegrant.yaml
+  - certmanager/dns01-secret.yaml
 release:
   name: rw
   namespace: remnawave
@@ -120,5 +121,57 @@ tests:
       routing.gatewayApi.createGateway: true
       routing.gatewayApi.gateway.className: cilium
       certManager.enabled: true
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: Cloudflare token creates a Secret in the cluster resource namespace (ClusterIssuer)
+    template: certmanager/dns01-secret.yaml
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      certManager.enabled: true
+      certManager.issuer.kind: ClusterIssuer
+      certManager.issuer.solver: dns01
+      certManager.issuer.dns01.cloudflare.apiToken: tok
+    asserts:
+      - equal: { path: metadata.name, value: remnawave-rw-remnawave-cloudflare }
+      - equal: { path: metadata.namespace, value: cert-manager }
+      - equal: { path: data.api-token, value: dG9r }
+
+  - it: ClusterIssuer references the chart-created Cloudflare Secret
+    template: certmanager/issuer.yaml
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      certManager.enabled: true
+      certManager.issuer.kind: ClusterIssuer
+      certManager.issuer.solver: dns01
+      certManager.issuer.dns01.cloudflare.apiToken: tok
+    asserts:
+      - equal:
+          path: 'spec.acme.solvers[0].dns01.cloudflare.apiTokenSecretRef'
+          value: { name: remnawave-rw-remnawave-cloudflare, key: api-token }
+
+  - it: Issuer keeps the Cloudflare Secret next to it, explicit name wins
+    template: certmanager/dns01-secret.yaml
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      certManager.enabled: true
+      certManager.issuer.solver: dns01
+      certManager.issuer.dns01.cloudflare.apiToken: tok
+      certManager.issuer.dns01.cloudflare.apiTokenSecretRef.name: cf
+    asserts:
+      - equal: { path: metadata.name, value: cf }
+      - equal: { path: metadata.namespace, value: istio-system }
+
+  - it: no token -> no Secret (existing one is referenced)
+    template: certmanager/dns01-secret.yaml
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      certManager.enabled: true
+      certManager.issuer.solver: dns01
+      certManager.issuer.dns01.cloudflare.apiTokenSecretRef.name: cf
     asserts:
       - hasDocuments: { count: 0 }

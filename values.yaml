@@ -395,6 +395,9 @@ certManager:
   enabled: false
   # -- Skip CRD presence checks (offline `helm template`)
   skipCrdCheck: false
+  # -- cert-manager --cluster-resource-namespace: where a ClusterIssuer reads
+  # its secrets (DNS-01 credentials created by the chart go there)
+  clusterResourceNamespace: cert-manager
 
   issuer:
     # -- Create the issuer; false -> reference an existing one by kind/name
@@ -435,6 +438,11 @@ certManager:
       # Secret refs live in the Issuer namespace (Issuer) or in the cert-manager
       # cluster resource namespace (ClusterIssuer).
       cloudflare:
+        # -- API token (Zone:DNS:Edit for every zone of the dnsNames).
+        # Non-empty -> the chart creates the Secret apiTokenSecretRef.name
+        # (empty name -> <issuer name>-cloudflare) in the Issuer namespace /
+        # clusterResourceNamespace. Empty -> reference an existing Secret.
+        apiToken: ""
         apiTokenSecretRef:
           name: ""
           key: api-token

@@ -166,8 +166,8 @@
 {{- if and $i.create (not $i.solvers) (eq $i.solver "dns01") }}
 {{- $d := $i.dns01 }}
 {{- if eq $d.provider "cloudflare" }}
-{{- if not $d.cloudflare.apiTokenSecretRef.name }}
-{{- fail "certManager.issuer.dns01.cloudflare.apiTokenSecretRef.name is required" }}
+{{- if not (include "remnawave.certManager.cloudflare.secretRef" . | fromYaml).name }}
+{{- fail "certManager.issuer.dns01.cloudflare: set apiToken (the chart creates the Secret) or apiTokenSecretRef.name (existing Secret)" }}
 {{- end }}
 {{- else if eq $d.provider "route53" }}
 {{- if not $d.route53.region }}

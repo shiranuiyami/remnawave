@@ -103,3 +103,15 @@ tests:
       subscriptionPage.secretEnv.REMNAWAVE_API_TOKEN: t
     asserts:
       - failedTemplate: { errorPattern: "collides with a panel port" }
+
+  - it: dns01 cloudflare needs a token or an existing Secret
+    template: panel/deployment.yaml
+    set:
+      routing.type: istio
+      routing.istio.createGateway: true
+      routing.skipCrdCheck: true
+      certManager.enabled: true
+      certManager.skipCrdCheck: true
+      certManager.issuer.solver: dns01
+    asserts:
+      - failedTemplate: { errorPattern: "cloudflare: set apiToken" }

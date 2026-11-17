@@ -245,13 +245,16 @@ the CNPG `<cluster>-app` Secret), `TELEGRAM_BOT_TOKEN`, `WEBHOOK_SECRET_HEADER` 
 
 ### DNS-01 credentials
 
-The chart does not create Secrets for DNS providers, it only references them
-(`certManager.issuer.dns01.<provider>.*SecretRef`). Create the Secret in the Issuer namespace for an
-`Issuer`, or in the cert-manager cluster resource namespace (usually `cert-manager`) for a
-`ClusterIssuer`:
+Cloudflare: set `certManager.issuer.dns01.cloudflare.apiToken` and the chart creates the Secret
+(`apiTokenSecretRef.name`, default `<issuer name>-cloudflare`) next to the issuer: in the Issuer
+namespace for an `Issuer`, in `certManager.clusterResourceNamespace` (default `cert-manager`) for a
+`ClusterIssuer`. Pass the token with `--set` / a separate values file, not in a committed one.
+
+Other providers (and Cloudflare with an empty `apiToken`) only reference existing Secrets
+(`certManager.issuer.dns01.<provider>.*SecretRef`); create them in the same namespace:
 
 ```sh
-kubectl -n remnawave create secret generic cloudflare-api-token --from-literal=api-token=<token>
+kubectl -n cert-manager create secret generic cloudflare-api-token --from-literal=api-token=<token>
 ```
 
 ## Environment variables

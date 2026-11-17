@@ -646,6 +646,31 @@ password
 {{- end -}}
 {{- end -}}
 
+{{/* Namespace where the issuer reads its secrets. */}}
+{{- define "remnawave.certManager.issuerSecretNamespace" -}}
+{{- if eq .Values.certManager.issuer.kind "ClusterIssuer" -}}
+{{- .Values.certManager.clusterResourceNamespace | default "cert-manager" -}}
+{{- else -}}
+{{- include "remnawave.certManager.namespace" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Cloudflare API token Secret is created by the chart. */}}
+{{- define "remnawave.certManager.cloudflare.create" -}}
+{{- $i := .Values.certManager.issuer -}}
+{{- if and .Values.certManager.enabled $i.create (not $i.solvers) (eq $i.solver "dns01") (eq $i.dns01.provider "cloudflare") $i.dns01.cloudflare.apiToken -}}true{{- end -}}
+{{- end -}}
+
+{{/* Cloudflare apiTokenSecretRef with the default name filled in. */}}
+{{- define "remnawave.certManager.cloudflare.secretRef" -}}
+{{- $ref := deepCopy (default (dict) .Values.certManager.issuer.dns01.cloudflare.apiTokenSecretRef) -}}
+{{- if and (not $ref.name) (include "remnawave.certManager.cloudflare.create" .) -}}
+{{- $_ := set $ref "name" (printf "%s-cloudflare" (include "remnawave.certManager.issuerName" .) | trunc 63 | trimSuffix "-") -}}
+{{- end -}}
+{{- $_ := set $ref "key" (default "api-token" $ref.key) -}}
+{{- toYaml $ref -}}
+{{- end -}}
+
 {{- define "remnawave.certManager.dnsNames" -}}
 {{- if .Values.certManager.certificate.dnsNames -}}
 {{- toYaml .Values.certManager.certificate.dnsNames -}}
@@ -688,7 +713,7 @@ password
 {{- $d := $i.dns01 -}}
 {{- $p := dict -}}
 {{- if eq $d.provider "cloudflare" -}}
-{{- $p = dict "cloudflare" (dict "apiTokenSecretRef" $d.cloudflare.apiTokenSecretRef) -}}
+{{- $p = dict "cloudflare" (dict "apiTokenSecretRef" (include "remnawave.certManager.cloudflare.secretRef" . | fromYaml)) -}}
 {{- else if eq $d.provider "route53" -}}
 {{- $r53 := dict -}}
 {{- range $k := list "region" "hostedZoneID" "role" "accessKeyIDSecretRef" "secretAccessKeySecretRef" -}}

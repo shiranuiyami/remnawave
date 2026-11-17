@@ -582,6 +582,10 @@
         "skipCrdCheck": {
           "type": "boolean"
         },
+        "clusterResourceNamespace": {
+          "type": "string",
+          "minLength": 1
+        },
         "issuer": {
           "type": "object",
           "properties": {
@@ -671,6 +675,9 @@
                 "cloudflare": {
                   "type": "object",
                   "properties": {
+                    "apiToken": {
+                      "type": "string"
+                    },
                     "apiTokenSecretRef": {
                       "$ref": "#/$defs/secretKeyRef"
                     }

@@ -94,6 +94,9 @@ cert-manager: {{ $cm.issuer.kind }} {{ include "remnawave.certManager.issuerName
   Certificate: kubectl -n {{ include "remnawave.certManager.namespace" . }} get certificate {{ include "remnawave.routing.tlsSecretName" . }}
   Issues:      kubectl -n {{ include "remnawave.certManager.namespace" . }} get certificaterequest,order,challenge
 {{- end }}
+{{- if include "remnawave.certManager.cloudflare.create" . }}
+  Cloudflare API token: Secret {{ include "remnawave.certManager.issuerSecretNamespace" . }}/{{ (include "remnawave.certManager.cloudflare.secretRef" . | fromYaml).name }} (created by the chart)
+{{- end }}
 {{- if include "remnawave.certManager.http01" . }}
 {{- if eq .Values.routing.type "gatewayApi" }}
   HTTP-01 via Gateway API: cert-manager must run with --enable-gateway-api (config.enableGatewayAPI=true).
