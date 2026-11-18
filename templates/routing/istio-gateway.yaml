@@ -8,6 +8,11 @@ apiVersion: {{ $i.apiVersion }}
 kind: Gateway
 metadata:
   name: {{ include "remnawave.routing.istio.gatewayName" . }}
+  # Gateway must live in the namespace of the ingress gateway pods it selects:
+  # istiod with PILOT_SCOPE_GATEWAY_TO_NAMESPACE=true only programs Gateways
+  # on proxies in the Gateway's own namespace, and credentialName secrets are
+  # resolved there as well.
+  namespace: {{ $gw.namespace }}
   labels:
     {{- include "remnawave.componentLabels" (dict "ctx" . "component" "routing") | nindent 4 }}
     {{- with $gw.labels }}

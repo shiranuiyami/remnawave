@@ -3,7 +3,8 @@
 {{- $vs := $i.virtualService }}
 {{- $gateways := $i.gateways }}
 {{- if $i.createGateway }}
-{{- $gateways = list (printf "%s/%s" .Release.Namespace (include "remnawave.routing.istio.gatewayName" .)) }}
+{{- /* Gateway is rendered in routing.istio.gateway.namespace (see istio-gateway.yaml). */}}
+{{- $gateways = list (printf "%s/%s" $i.gateway.namespace (include "remnawave.routing.istio.gatewayName" .)) }}
 {{- end }}
 {{- $vsRedirect := include "remnawave.routing.istio.vsRedirect" . }}
 {{- $svc := printf "%s.%s.svc.%s" (include "remnawave.panel.fullname" .) .Release.Namespace .Values.routing.clusterDomain }}
